@@ -74,6 +74,7 @@ echo "Granting user permissions..."
 ROLES=(
     "roles/compute.instanceAdmin.v1"
     "roles/compute.networkAdmin"
+    "roles/compute.securityAdmin"
     "roles/iam.serviceAccountAdmin"
     "roles/storage.admin"
     "roles/monitoring.editor"

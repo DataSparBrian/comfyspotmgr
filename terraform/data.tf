@@ -1,10 +1,10 @@
 # ComfySpotMgr - Data Sources
 # Data sources for dynamic resource selection
 
-# Get the latest Deep Learning VM image with CUDA 12.3
+# Get the latest PyTorch Deep Learning VM image with GPU support
 data "google_compute_image" "deep_learning_image" {
-  family  = "common-cu123"
-  project = "ml-images"
+  family  = "pytorch-2-7-cu128-ubuntu-2204-nvidia-570"
+  project = "deeplearning-platform-release"
 }
 
 # Get current project information

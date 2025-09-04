@@ -123,7 +123,6 @@ resource "google_compute_instance" "comfy_spot_vm" {
     provisioning_model          = "SPOT"
     instance_termination_action = "DELETE"
     on_host_maintenance         = "TERMINATE"
-    preemptible                 = false # Spot instances use provisioning_model instead
   }
 
   network_interface {

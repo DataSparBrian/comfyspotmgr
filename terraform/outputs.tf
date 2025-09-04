@@ -21,10 +21,6 @@ output "storage_bucket_name" {
   value       = google_storage_bucket.model_storage_bucket.name
 }
 
-output "terraform_state_bucket_name" {
-  description = "Name of the GCS bucket for Terraform state"
-  value       = google_storage_bucket.terraform_state.name
-}
 
 output "ssh_command" {
   description = "Command to SSH into the instance via IAP"

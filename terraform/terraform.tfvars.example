@@ -1,0 +1,36 @@
+# ComfySpotMgr - Configuration Example
+# Copy this file to terraform.tfvars and fill in your values
+
+# Required Variables  
+project_id         = "your-gcp-project-id"
+iap_user_email     = "your-email@example.com"     # Your email for SSH access to the server
+notification_email = "alerts@example.com"         # Email address for system alerts
+
+# Server Location & Identity
+region         = "us-central1"                    # Google Cloud region (where to deploy)
+zone           = "us-central1-a"                  # Specific zone within the region  
+instance_name  = "comfy-spot-a3"                  # Name for your ComfyUI server
+
+# Server Hardware
+machine_type   = "a3-highgpu-1g"                  # Virtual machine size/type
+boot_disk_size = 50                               # Server disk size in GB
+gpu_type       = "nvidia-h100-80gb"               # GPU model for AI processing
+gpu_count      = 1                                # Number of GPUs (keep as 1)
+
+# Networking (Advanced - usually don't change these)
+network_name   = "comfy-net"                      # Name for the private network
+subnet_name    = "comfy-subnet"                   # Name for the network subnet
+subnet_cidr    = "172.32.64.0/24"                 # IP address range for the network
+
+# Model Storage (Cloud bucket - keeps your AI models when server is destroyed)
+bucket_name          = "your-unique-bucket-name"  # Bucket name for storing AI models
+bucket_location      = "us-central1"              # GCP region where the models are physically located
+bucket_force_destroy = false                      # Set to "false" to prevent accidental deletion of models
+
+# Performance & Access Configuration
+ram_disk_size        = "75G"                       # RAM disk size for ultra-fast model access (75G recommended)
+comfyui_port         = 8188                        # Port for ComfyUI web interface (8188 is standard)
+allowed_ip_address   = "1.2.3.4"                  # Your public IP for direct access (get from whatismyip.com)
+
+# Infrastructure Management
+terraform_state_bucket = "your-unique-state-bucket-name"  # Bucket for Terraform state (must be globally unique)

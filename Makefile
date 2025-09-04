@@ -54,7 +54,11 @@ destroy:
 
 # Security command - grant permissions
 grant-permissions:
-	@./scripts/grant-permissions.sh
+	@./scripts/grant-permissions.sh $(filter-out $@,$(MAKECMDGOALS))
+
+# Prevent Make from treating arguments as targets
+%:
+	@:
 
 # Delegate specific commands to terraform/Makefile
 start stop status ssh forward logs upload-models clean validate list-models restart destroy-vm quick-start workflow-demo:

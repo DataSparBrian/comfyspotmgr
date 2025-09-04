@@ -77,6 +77,7 @@ ROLES=(
     "roles/compute.networkAdmin"
     "roles/compute.securityAdmin"
     "roles/iam.serviceAccountAdmin"
+    "roles/iam.serviceAccountUser"
     "roles/storage.admin"
     "roles/monitoring.editor"
     "roles/logging.configWriter"

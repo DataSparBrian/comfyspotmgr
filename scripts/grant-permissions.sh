@@ -81,6 +81,7 @@ ROLES=(
     "roles/monitoring.editor"
     "roles/logging.configWriter"
     "roles/serviceusage.serviceUsageAdmin"
+    "roles/iap.tunnelResourceAccessor"
 )
 
 # Grant each role

@@ -67,6 +67,13 @@ resource "google_service_account" "comfy_sa" {
   display_name = var.service_account_display_name
 }
 
+# Grant the user permission to use the service account
+resource "google_service_account_iam_member" "comfy_sa_user" {
+  service_account_id = google_service_account.comfy_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "user:${var.iap_user_email}"
+}
+
 # --------------------------------------------------------------------
 # 3. Google Cloud Storage Bucket for Models
 # --------------------------------------------------------------------
@@ -95,7 +102,7 @@ resource "google_compute_instance" "comfy_spot_vm" {
   boot_disk {
     auto_delete = true
     initialize_params {
-      size  = var.boot_disk_size
+      size  = 100  # Deep Learning VM requires minimum 100 GB
       image = local.selected_image.self_link
     }
   }
@@ -120,7 +127,9 @@ resource "google_compute_instance" "comfy_spot_vm" {
   }
 
   scheduling {
+    preemptible                 = true
     provisioning_model          = "SPOT"
+    automatic_restart          = false
     instance_termination_action = "DELETE"
     on_host_maintenance         = "TERMINATE"
   }
@@ -257,12 +266,10 @@ resource "google_compute_firewall" "allow_all_from_specific_ip" {
   target_tags = local.instance_tags
 }
 
-resource "google_compute_instance_iam_member" "iap_tunnel_user" {
-  project       = google_compute_instance.comfy_spot_vm.project
-  zone          = google_compute_instance.comfy_spot_vm.zone
-  instance_name = google_compute_instance.comfy_spot_vm.name
-  role          = "roles/iap.tunnelResourceAccessor"
-  member        = "user:${var.iap_user_email}"
+resource "google_project_iam_member" "iap_tunnel_user" {
+  project = var.project_id
+  role    = "roles/iap.tunnelResourceAccessor"
+  member  = "user:${var.iap_user_email}"
 }
 
 

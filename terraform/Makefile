@@ -4,8 +4,10 @@
 
 # Default target
 help:
+	@echo ""
+	@echo "=============================================="
 	@echo "ComfySpotMgr - ComfyUI Spot Deployment Manager"
-	@echo "============================================="
+	@echo "=============================================="
 	@echo ""
 	@echo "🚀 Quick Start:"
 	@echo "  setup         - Interactive setup wizard (run this first!)"
@@ -172,6 +174,18 @@ clean:
 	rm -f .terraform.lock.hcl
 	rm -f terraform.tfstate*
 	rm -f *tfplan*
+
+# Reset backend configuration for troubleshooting
+reset-backend: check-config
+	@echo "⚠️  This will reset Terraform backend configuration"
+	@echo "⚠️  Use this only if you're having backend issues"
+	@read -p "Continue? [y/N]: " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		$(MAKE) clean; \
+		echo "ℹ️  Backend reset. Run 'make setup' to reconfigure."; \
+	else \
+		echo "Cancelled"; \
+	fi
 
 # Setup helper functions
 _check_prerequisites:
@@ -358,24 +372,43 @@ _enable_apis:
 
 _setup_backend:
 	@if [ "$(DRY_RUN)" = "true" ]; then \
-		echo "🔍 [DRY-RUN] Would initialize Terraform (if .terraform directory doesn't exist)"; \
-		echo "🔍 [DRY-RUN] Would create state bucket using: terraform apply -target=google_storage_bucket.terraform_state"; \
 		BUCKET_NAME=$$(grep '^terraform_state_bucket' terraform.tfvars 2>/dev/null | cut -d'"' -f2 || echo "[bucket-name-from-config]"); \
-		echo "🔍 [DRY-RUN] Would migrate state to remote backend: gs://$$BUCKET_NAME"; \
-		echo "🔍 [DRY-RUN] Would run: terraform init -migrate-state -backend-config=\"bucket=$$BUCKET_NAME\""; \
+		REGION=$$(grep '^region' terraform.tfvars 2>/dev/null | cut -d'"' -f2 || echo "[region-from-config]"); \
+		echo "🔍 [DRY-RUN] Would create Terraform state bucket: $$BUCKET_NAME"; \
+		echo "🔍 [DRY-RUN] Would run: gcloud storage buckets create gs://$$BUCKET_NAME --location=$$REGION"; \
+		echo "🔍 [DRY-RUN] Would enable object versioning for state recovery"; \
+		echo "🔍 [DRY-RUN] Would initialize Terraform directly with remote backend"; \
+		echo "🔍 [DRY-RUN] Would run: terraform init -backend-config=\"bucket=$$BUCKET_NAME\""; \
 		echo "✅ Remote state backend setup complete! (dry-run)"; \
 		echo "ℹ️  Would use state bucket: gs://$$BUCKET_NAME"; \
 	else \
 		echo "ℹ️  Setting up Terraform remote state backend..."; \
-		if [ ! -d ".terraform" ]; then \
-			echo "ℹ️  Initializing Terraform..."; \
-			terraform init; \
-		fi; \
-		echo "ℹ️  Creating Terraform state bucket..."; \
-		terraform apply -target=google_storage_bucket.terraform_state -var-file="terraform.tfvars" -auto-approve; \
 		BUCKET_NAME=$$(grep '^terraform_state_bucket' terraform.tfvars | cut -d'"' -f2 2>/dev/null); \
-		echo "ℹ️  Migrating to remote state backend..."; \
-		terraform init -migrate-state -backend-config="bucket=$$BUCKET_NAME" -force-copy; \
+		REGION=$$(grep '^region' terraform.tfvars | cut -d'"' -f2 2>/dev/null); \
+		PROJECT_ID=$$(grep '^project_id' terraform.tfvars | cut -d'"' -f2 2>/dev/null); \
+		if [ -z "$$BUCKET_NAME" ]; then \
+			echo "❌ terraform_state_bucket not found in terraform.tfvars"; \
+			exit 1; \
+		fi; \
+		if [ -z "$$REGION" ]; then \
+			echo "❌ region not found in terraform.tfvars"; \
+			exit 1; \
+		fi; \
+		echo "ℹ️  Creating Terraform state bucket: $$BUCKET_NAME in region $$REGION"; \
+		if ! gcloud storage buckets describe "gs://$$BUCKET_NAME" >/dev/null 2>&1; then \
+			echo "ℹ️  Bucket does not exist, creating..."; \
+			gcloud storage buckets create "gs://$$BUCKET_NAME" \
+				--location="$$REGION" \
+				--uniform-bucket-level-access \
+				--project="$$PROJECT_ID"; \
+			echo "ℹ️  Enabling object versioning for state recovery..."; \
+			gcloud storage buckets update "gs://$$BUCKET_NAME" --versioning; \
+			echo "✅ Terraform state bucket created successfully"; \
+		else \
+			echo "ℹ️  Bucket $$BUCKET_NAME already exists, skipping creation"; \
+		fi; \
+		echo "ℹ️  Initializing Terraform with remote backend..."; \
+		terraform init -backend-config="bucket=$$BUCKET_NAME"; \
 		echo "✅ Remote state backend setup complete!"; \
 		echo "ℹ️  State bucket: gs://$$BUCKET_NAME"; \
 	fi
@@ -397,7 +430,7 @@ _validate_config:
 # Quick start guide
 quick-start:
 	@echo "🚀 ComfySpotMgr Quick Start"
-	@echo "========================="
+	@echo "==========================="
 	@echo ""
 	@echo "First time setup:"
 	@echo "  make setup         # Interactive configuration"

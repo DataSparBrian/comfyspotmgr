@@ -36,3 +36,29 @@ output "comfyui_url" {
   description = "ComfyUI web interface URL (after port forwarding)"
   value       = "http://localhost:${var.comfyui_port}"
 }
+
+# Image selection outputs for validation
+output "selected_image_info" {
+  description = "Information about the selected Deep Learning VM image"
+  value = {
+    name         = local.selected_image.name
+    family       = local.selected_image.family
+    creation_date = local.selected_image.creation_timestamp
+    self_link    = local.selected_image.self_link
+  }
+}
+
+output "image_selection_method" {
+  description = "Which candidate image was successfully selected"
+  value = local.selected_family
+}
+
+output "image_search_criteria" {
+  description = "The search criteria used for image selection"
+  value = {
+    pytorch_pattern = var.pytorch_version_pattern
+    cuda_version   = var.cuda_version
+    ubuntu_version = var.ubuntu_version
+    fallback_family = var.fallback_image_family
+  }
+}

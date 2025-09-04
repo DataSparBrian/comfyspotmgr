@@ -176,3 +176,28 @@ variable "terraform_state_bucket" {
   type        = string
   # No default - must be specified in terraform.tfvars
 }
+
+# Image selection variables for dynamic PyTorch Deep Learning VM selection
+variable "pytorch_version_pattern" {
+  description = "Pattern for PyTorch version selection (e.g., 'pytorch-2-*' for latest 2.x)"
+  type        = string
+  default     = "pytorch-2-*"
+}
+
+variable "cuda_version" {
+  description = "CUDA version preference (e.g., cu128, cu121, cu118)"
+  type        = string
+  default     = "cu128"
+}
+
+variable "ubuntu_version" {
+  description = "Ubuntu version preference (e.g., ubuntu-2204, ubuntu-2004)"
+  type        = string
+  default     = "ubuntu-2204"
+}
+
+variable "fallback_image_family" {
+  description = "Fallback image family when specific pattern matching fails"
+  type        = string
+  default     = "pytorch-latest-gpu"
+}

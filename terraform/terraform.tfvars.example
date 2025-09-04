@@ -34,3 +34,11 @@ allowed_ip_address   = "1.2.3.4"                  # Your public IP for direct ac
 
 # Infrastructure Management
 terraform_state_bucket = "your-unique-state-bucket-name"  # Bucket for Terraform state (must be globally unique)
+
+# Image Selection (Optional - Advanced Configuration)
+# These control which PyTorch Deep Learning VM image is selected
+# Leave these at defaults for most users - they will automatically select the latest compatible image
+pytorch_version_pattern = "pytorch-2-*"                   # Pattern for PyTorch version (e.g., "pytorch-2-*" for latest 2.x)
+cuda_version           = "cu128"                           # CUDA version preference (cu128, cu121, cu118, etc.)
+ubuntu_version         = "ubuntu-2204"                     # Ubuntu version (ubuntu-2204, ubuntu-2004, etc.)
+fallback_image_family  = "pytorch-latest-gpu"             # Fallback if preferred pattern fails

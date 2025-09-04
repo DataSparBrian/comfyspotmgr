@@ -96,7 +96,7 @@ resource "google_compute_instance" "comfy_spot_vm" {
     auto_delete = true
     initialize_params {
       size  = var.boot_disk_size
-      image = data.google_compute_image.deep_learning_image.self_link
+      image = local.selected_image.self_link
     }
   }
 

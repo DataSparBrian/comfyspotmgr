@@ -53,12 +53,11 @@ output "image_selection_method" {
   value = local.selected_family
 }
 
-output "image_search_criteria" {
-  description = "The search criteria used for image selection"
+output "deep_learning_vm_family" {
+  description = "The Deep Learning VM image family being used"
   value = {
-    pytorch_pattern = var.pytorch_version_pattern
-    cuda_version   = var.cuda_version
-    ubuntu_version = var.ubuntu_version
-    fallback_family = var.fallback_image_family
+    image_family = local.deep_learning_image_family
+    description  = "Current supported Google Cloud Deep Learning VM with PyTorch 2.7, CUDA 12.8, Ubuntu 22.04, NVIDIA 570"
+    project      = "deeplearning-platform-release"
   }
 }

@@ -262,6 +262,11 @@ make ssh
 - Check logs: `make logs`
 - Verify billing and quotas in Google Cloud Console
 
+**Deep Learning VM Image Issues:**
+- ComfySpotMgr uses the current supported Google Cloud Deep Learning VM image: `pytorch-2-7-cu128-ubuntu-2204-nvidia-570`
+- This provides PyTorch 2.7, CUDA 12.8, Ubuntu 22.04, and NVIDIA driver 570
+- Image selection is now simplified and robust (no complex fallback logic needed)
+
 ## Security Considerations
 
 ### 🔐 Account Separation (Critical)

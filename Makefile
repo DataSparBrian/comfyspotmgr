@@ -328,7 +328,7 @@ _enable_apis:
 	@echo ""
 	@echo "Step 4: Enabling Google Cloud APIs..."
 	@PROJECT_ID=$$(grep '^project_id' terraform/terraform.tfvars | cut -d'"' -f2); \
-	APIS="compute.googleapis.com storage.googleapis.com iam.googleapis.com monitoring.googleapis.com logging.googleapis.com serviceusage.googleapis.com"; \
+	APIS="compute.googleapis.com storage.googleapis.com iam.googleapis.com monitoring.googleapis.com logging.googleapis.com serviceusage.googleapis.com cloudresourcemanager.googleapis.com"; \
 	for API in $$APIS; do \
 		echo "ℹ️  Enabling $$API..."; \
 		if gcloud services enable "$$API" --project="$$PROJECT_ID" --quiet 2>/dev/null || \

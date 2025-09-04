@@ -52,6 +52,7 @@ REQUIRED_APIS=(
     "iam.googleapis.com"
     "monitoring.googleapis.com"
     "logging.googleapis.com"
+    "cloudresourcemanager.googleapis.com"
 )
 
 for api in "${REQUIRED_APIS[@]}"; do

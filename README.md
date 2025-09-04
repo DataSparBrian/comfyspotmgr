@@ -58,19 +58,19 @@ This project is actively under development. The core functionality is stable and
 ## Project Structure
 
 ```
-├── terraform/              # Terraform infrastructure code ✅
-│   ├── *.tf                # Terraform configuration files
-│   ├── terraform.tfvars    # Your configuration (created by setup)
-│   ├── Makefile           # Infrastructure management commands
-│   ├── environments/      # 🚧 Maybe: Different config templates  
-│   └── modules/          # 🚧 Maybe: Reusable components (if needed)
-├── scripts/               # Utility scripts ✅
+├── Makefile              # All management commands (simplified!) ✅
+├── terraform/            # Terraform infrastructure code ✅
+│   ├── *.tf              # Terraform configuration files
+│   ├── terraform.tfvars  # Your configuration (created by setup)
+│   ├── environments/    # 🚧 Maybe: Different config templates  
+│   └── modules/         # 🚧 Maybe: Reusable components (if needed)
+├── scripts/             # Utility scripts ✅
 │   ├── manage-instance.sh # Instance lifecycle management
 │   ├── upload-models.sh  # Model upload utility
 │   └── grant-permissions.sh # Permission setup script
-├── docs/                 # 🚧 Someday: Better documentation (when motivated!)
-├── examples/            # 🚧 Maybe: Sample configs for different use cases
-└── README.md           # This file ✅
+├── docs/               # 🚧 Someday: Better documentation (when motivated!)
+├── examples/          # 🚧 Maybe: Sample configs for different use cases
+└── README.md         # This file ✅
 ```
 
 **Legend:** ✅ Complete | 🚧 Work in Progress | ❌ Planned
@@ -127,9 +127,6 @@ ComfySpotMgr includes an interactive setup wizard that handles everything:
 # Interactive setup wizard - handles everything!
 make setup
 
-# Or if you prefer to work from terraform/ directory:
-cd terraform && make setup
-
 # Preview what setup would do (without making changes)
 make setup-dry-run
 ```
@@ -172,7 +169,7 @@ make ssh
 
 ## ⚙️ Configuration
 
-The setup wizard creates `terraform.tfvars` with all necessary settings. You can manually edit it later if needed:
+The setup wizard creates `terraform/terraform.tfvars` with all necessary settings. You can manually edit it later if needed:
 
 ```hcl
 # Core Configuration

@@ -219,7 +219,7 @@ CONFIG_EOF
     echo "Starting ComfyUI server..."
 
     # Start ComfyUI as the user (not as root)
-    sudo -u $(logname) -H bash -c "cd $COMFY_PATH && python main.py --listen --port ${var.comfyui_port}"
+    sudo -u $(logname) -H bash -c "cd $COMFY_PATH && python3 main.py --listen --port ${var.comfyui_port}"
   EOF
 
   tags = local.instance_tags

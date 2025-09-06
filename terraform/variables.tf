@@ -177,5 +177,11 @@ variable "terraform_state_bucket" {
   # No default - must be specified in terraform.tfvars
 }
 
+variable "google_chat_webhook_url" {
+  description = "Google Chat webhook URL for ComfyUI ready notifications"
+  type        = string
+  # No default - must be specified in terraform.tfvars
+}
+
 # Image selection is now simplified to use the current supported Deep Learning VM family
 # No additional variables needed - using pytorch-2-7-cu128-ubuntu-2204-nvidia-570 directly

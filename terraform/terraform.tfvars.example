@@ -32,6 +32,9 @@ ram_disk_size        = "75G"                       # RAM disk size for ultra-fas
 comfyui_port         = 8188                        # Port for ComfyUI web interface (8188 is standard)
 allowed_ip_address   = "1.2.3.4"                  # Your public IP for direct access (get from whatismyip.com)
 
+# Notifications (Google Chat)
+google_chat_webhook_url = "https://chat.googleapis.com/v1/spaces/YOUR_SPACE/messages?key=YOUR_KEY&token=YOUR_TOKEN"  # Google Chat webhook URL for notifications
+
 # Infrastructure Management
 terraform_state_bucket = "your-unique-state-bucket-name"  # Bucket for Terraform state (must be globally unique)
 

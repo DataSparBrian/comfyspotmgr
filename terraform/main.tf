@@ -141,7 +141,7 @@ resource "google_compute_instance" "comfy_spot_vm" {
     }
   }
 
-  # UPDATED - Startup script now installs FUSE and mounts the GCS bucket
+  # UPDATED - Startup script with Google Chat notifications
   metadata_startup_script = <<-EOF
     #!/bin/bash
     set -e
@@ -154,6 +154,28 @@ resource "google_compute_instance" "comfy_spot_vm" {
     RAM_DISK_PATH="/mnt/ramdisk"
     COMFY_PATH="$RAM_DISK_PATH/ComfyUI"
     MODELS_PATH="$RAM_DISK_PATH/models"
+    WEBHOOK_URL="${var.google_chat_webhook_url}"
+    INSTANCE_NAME="${var.instance_name}"
+    INSTANCE_ZONE="${var.zone}"
+    COMFY_PORT="${var.comfyui_port}"
+
+    # Function to send Google Chat notification
+    send_chat_notification() {
+        local message="$1"
+        echo "[ComfySpotMgr] Sending Chat Notification: $message"
+        curl -s -X POST -H 'Content-Type: application/json' "$WEBHOOK_URL" \
+            -d "{\"text\": \"$message\"}" > /dev/null || true
+        sleep 1
+    }
+
+    # Get public IP (will be available after instance starts)
+    get_public_ip() {
+        curl -s -H "Metadata-Flavor: Google" \
+            http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip || echo "localhost"
+    }
+
+    # Send startup notification
+    send_chat_notification "🚀 ComfyUI deployment starting on $INSTANCE_NAME in $INSTANCE_ZONE..."
 
     # Install dependencies
     export GCSFUSE_REPO=gcsfuse-$(lsb_release -c -s)
@@ -178,8 +200,10 @@ resource "google_compute_instance" "comfy_spot_vm" {
     if [ "$(ls -A $GCS_MOUNT_DIR 2>/dev/null)" ]; then
       rsync -ah --progress "$GCS_MOUNT_DIR/" "$MODELS_PATH/"
       echo "✅ Models copied to RAM disk!"
+      send_chat_notification "📦 Models copied to $RAM_DISK_SIZE RAM disk on $INSTANCE_NAME"
     else
       echo "No models found in GCS bucket, continuing with empty models directory"
+      send_chat_notification "📦 No models found in GCS bucket - continuing with empty models directory"
     fi
 
     # Clean install of ComfyUI directly to RAM disk
@@ -216,10 +240,30 @@ CONFIG_EOF
     rmdir $GCS_MOUNT_DIR
 
     echo "✅ ComfyUI installation complete on RAM disk!"
-    echo "Starting ComfyUI server..."
+    send_chat_notification "✅ ComfyUI installation complete on $INSTANCE_NAME - starting server..."
 
+    # Get the public IP before starting the server
+    PUBLIC_IP=$(get_public_ip)
+    
+    # Create a background process to send ready notification once ComfyUI is responsive
+    (
+        sleep 30  # Give ComfyUI time to start
+        for i in {1..20}; do
+            if curl -s --connect-timeout 3 "http://localhost:$COMFY_PORT/" > /dev/null 2>&1; then
+                send_chat_notification "🎉 ComfyUI Server Ready!
+📍 Instance: $INSTANCE_NAME ($INSTANCE_ZONE)
+🌐 Access: http://$PUBLIC_IP:$COMFY_PORT
+⚡ Running on $RAM_DISK_SIZE RAM disk
+🎯 Click the link above to launch ComfyUI on your iPad!"
+                break
+            fi
+            sleep 10
+        done
+    ) &
+
+    echo "Starting ComfyUI server on port $COMFY_PORT..."
     # Start ComfyUI as the user (not as root)
-    sudo -u $(logname) -H bash -c "cd $COMFY_PATH && python3 main.py --listen --port ${var.comfyui_port}"
+    sudo -u $(logname) -H bash -c "cd $COMFY_PATH && python3 main.py --listen --port $COMFY_PORT"
   EOF
 
   tags = local.instance_tags
@@ -274,44 +318,76 @@ resource "google_project_iam_member" "iap_tunnel_user" {
 
 
 # --------------------------------------------------------------------
-# 6. Proactive Alerting for Integrity Failure
+# 6. ComfyUI Service Monitoring & Google Chat Notifications
 # --------------------------------------------------------------------
-resource "google_monitoring_notification_channel" "email" {
-  display_name = "Email Alert Channel"
-  type         = "email"
+
+# Google Chat webhook notification channel
+resource "google_monitoring_notification_channel" "google_chat_webhook" {
+  display_name = "ComfyUI Ready - Google Chat"
+  type         = "webhook_tokenauth"
   labels = {
-    email_address = var.notification_email
+    url = var.google_chat_webhook_url
+  }
+  user_labels = {
+    purpose = "comfyui-ready-notifications"
   }
 }
 
-resource "google_logging_metric" "integrity_failures" {
-  name   = "shielded-vm-integrity-failure-metric"
-  filter = "resource.type=\"gce_instance\" AND logName:\"logs/compute.googleapis.com%2Fshielded_vm_integrity\" AND jsonPayload.lateBootReportEvent.policyEvaluationPassed=\"false\""
-  metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "INT64"
+# HTTP uptime check to monitor ComfyUI service
+resource "google_monitoring_uptime_check_config" "comfyui_uptime_check" {
+  display_name = "ComfyUI Service Check"
+  timeout      = "10s"
+  period       = "300s" # Check every 5 minutes
+
+  http_check {
+    port           = var.comfyui_port
+    use_ssl        = false
+    path           = "/"
+    request_method = "GET"
   }
+
+  monitored_resource {
+    type = "gce_instance"
+    labels = {
+      project_id  = var.project_id
+      instance_id = google_compute_instance.comfy_spot_vm.instance_id
+      zone        = var.zone
+    }
+  }
+
+  depends_on = [google_compute_instance.comfy_spot_vm]
 }
 
-resource "google_monitoring_alert_policy" "integrity_alert_policy" {
-  display_name = "Shielded VM Integrity Failure"
+# Alert policy for ComfyUI service availability
+resource "google_monitoring_alert_policy" "comfyui_ready_alert" {
+  display_name = "ComfyUI Service Ready"
   combiner     = "OR"
+  
   conditions {
-    display_name = "Triggers if there is at least one integrity failure in 5 minutes"
+    display_name = "ComfyUI HTTP check succeeds"
     condition_threshold {
-      filter     = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.integrity_failures.name}\" AND resource.type=\"gce_instance\""
-      duration   = "300s"
-      comparison = "COMPARISON_GT"
+      filter         = "resource.type=\"gce_instance\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id=\"${google_monitoring_uptime_check_config.comfyui_uptime_check.uptime_check_id}\""
+      duration       = "60s"
+      comparison     = "COMPARISON_GT"
+      threshold_value = 0
+      
+      aggregations {
+        alignment_period     = "60s"
+        per_series_aligner   = "ALIGN_FRACTION_TRUE"
+        cross_series_reducer = "REDUCE_MEAN"
+      }
+      
       trigger {
         count = 1
       }
-      aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_COUNT"
-      }
     }
   }
+
   notification_channels = [
-    google_monitoring_notification_channel.email.id
+    google_monitoring_notification_channel.google_chat_webhook.id
   ]
+
+  alert_strategy {
+    auto_close = "1800s" # Auto-close after 30 minutes
+  }
 }

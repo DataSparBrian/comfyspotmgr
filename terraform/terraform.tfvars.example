@@ -38,10 +38,13 @@ google_chat_webhook_url = "https://chat.googleapis.com/v1/spaces/YOUR_SPACE/mess
 # Infrastructure Management
 terraform_state_bucket = "your-unique-state-bucket-name"  # Bucket for Terraform state (must be globally unique)
 
-# Image Selection (Optional - Advanced Configuration)
-# These control which PyTorch Deep Learning VM image is selected
-# Leave these at defaults for most users - they will automatically select the latest compatible image
-pytorch_version_pattern = "pytorch-2-*"                   # Pattern for PyTorch version (e.g., "pytorch-2-*" for latest 2.x)
-cuda_version           = "cu128"                           # CUDA version preference (cu128, cu121, cu118, etc.)
-ubuntu_version         = "ubuntu-2204"                     # Ubuntu version (ubuntu-2204, ubuntu-2004, etc.)
-fallback_image_family  = "pytorch-latest-gpu"             # Fallback if preferred pattern fails
+# Runtime Management (Optional - Automatic shutdown configuration)
+max_runtime_hours        = 1     # Maximum runtime in hours before automatic shutdown
+shutdown_warning_minutes = 5     # Minutes before shutdown to send warning notification  
+enable_max_runtime       = true  # Enable automatic shutdown (recommended for cost control)
+
+# Persistent Caching (Optional - Hyperdisk caching for faster restarts)
+persistent_disk_size     = 300                    # Size of persistent cache disk in GB
+persistent_disk_type     = "hyperdisk-balanced"   # Type of Hyperdisk (hyperdisk-balanced, hyperdisk-extreme, etc.)
+enable_persistent_cache  = true                   # Enable persistent caching across instance restarts
+cache_sync_interval      = 300                    # Background sync interval in seconds (5 minutes)

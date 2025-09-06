@@ -154,6 +154,11 @@ resource "google_compute_instance" "comfy_spot_vm" {
     instance_termination_action = "STOP"
     on_host_maintenance         = "TERMINATE"
     
+    # Local SSD recovery timeout - discard data immediately on termination
+    local_ssd_recovery_timeout {
+      seconds = 0
+    }
+    
     # Conditional max run duration block
     dynamic "max_run_duration" {
       for_each = var.enable_max_runtime ? [1] : []

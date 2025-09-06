@@ -207,8 +207,17 @@ machine_type    = "a3-highgpu-1g"           # A3 instance with H100 GPU
 ram_disk_size   = "75G"                     # Ultra-fast model storage
 region         = "us-central1"              # Deployment location
 
-# Storage
-bucket_name     = "your-models-bucket"      # Auto-generated unique name
+# Storage & Caching
+bucket_name              = "your-models-bucket"      # Auto-generated unique name
+persistent_disk_size     = 300                       # Persistent cache disk size (GB)
+persistent_disk_type     = "hyperdisk-balanced"      # Cache disk type
+enable_persistent_cache  = true                      # Enable persistent caching
+cache_sync_interval      = 300                       # Background sync interval (seconds)
+
+# Runtime Management
+max_runtime_hours        = 1                         # Auto-shutdown after hours
+shutdown_warning_minutes = 5                         # Warning before shutdown
+enable_max_runtime       = true                      # Enable auto-shutdown
 ```
 
 **All settings are configured by ComfySpotMgr during setup - no manual editing required!**
@@ -239,7 +248,7 @@ sudo tail -f /var/log/comfy-sync.log
 make logs
 ```
 
-### 🔄 Cache Sync Settings
+### � Cache Sync Settings
 The system syncs every **5 minutes** by default:
 - **RAM Disk** → **Local SSD Cache** (for faster next startup)
 - **RAM Disk** → **Hyperdisk Cache** (for zone resilience)
@@ -356,7 +365,7 @@ make ssh
 - **IP Allowlist**: Configurable IP restrictions for web interface access
 - **Spot Instance Isolation**: Temporary compute with persistent encrypted storage
 
-## 🔬 Advanced Usage
+## � Advanced Usage
 
 ### Multiple Regions
 Re-run setup wizard with different region/zone for multi-region deployments

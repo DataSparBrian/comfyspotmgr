@@ -77,12 +77,37 @@ This project is actively under development. The core functionality is stable and
 
 ## Architecture
 
+ComfySpotMgr uses a sophisticated **multi-tier caching architecture** for maximum performance and resilience:
+
+### 🚀 Multi-Tier Caching System
+```
+RAM Disk (75GB) → Local SSD Cache → Hyperdisk Persistent (300GB) → GCS Bucket
+   ↑ Active         ↑ ~30s Recovery    ↑ Zone-Resilient Cache    ↑ Model Storage
+```
+
+**Performance Benefits:**
+- **~30 second startup** when Local SSD cache is available (after first run)
+- **~60-90 second startup** when recovering from Hyperdisk cache  
+- **Fresh installation only** when no cache exists (~5-10 minutes)
+- **Automatic cache population** during background operation
+
+### 🏗️ Infrastructure Components
 - **Spot VM Instance**: A3-highgpu-1g with NVIDIA H100 80GB GPU running on GCP spot pricing  
 - **RAM Disk Performance**: Configurable RAM disk (default 75GB) for ultra-fast ComfyUI and model access
-- **Model Storage**: GCS bucket with automatic model copying to RAM disk at startup
+- **Multi-Tier Storage**: 
+  - **Local SSD Cache**: Boot disk cache for fastest recovery
+  - **Hyperdisk Balanced**: 300GB persistent cache surviving instance recreation
+  - **GCS Bucket**: Model storage and final backup layer
 - **Security**: Shielded VM with secure boot, vTPM, and integrity monitoring
 - **Access Control**: IAP SSH access + configurable IP allowlist for web interface
-- **Monitoring**: Proactive alerting for integrity failures
+- **Monitoring**: Proactive alerting for integrity failures and cache status
+
+### 🔄 Cache Intelligence
+- **Smart Detection**: Automatically finds fastest available cache layer
+- **Background Sync**: Continuous 5-minute intervals sync RAM disk to cache layers  
+- **Shutdown Preservation**: Graceful shutdown hooks save state before termination
+- **Cache Validation**: Integrity checks ensure reliable recovery
+- **Zone Resilience**: Hyperdisk cache survives instance recreation and zone failures
 
 ## 🚀 Quick Start
 
@@ -187,6 +212,55 @@ bucket_name     = "your-models-bucket"      # Auto-generated unique name
 ```
 
 **All settings are configured by ComfySpotMgr during setup - no manual editing required!**
+
+## 🚀 Cache Management
+
+ComfySpotMgr's multi-tier caching system dramatically improves startup times after the first deployment.
+
+### 📊 Cache Behavior
+- **First Deployment**: Fresh installation (~5-10 minutes) + automatic cache population
+- **Subsequent Deployments**: 
+  - **Local SSD Hit**: ~30 second recovery
+  - **Hyperdisk Hit**: ~60-90 second recovery  
+  - **Cache Miss**: Falls back to fresh installation
+
+### 🔧 Cache Commands
+```bash
+# Check cache status via SSH
+make ssh
+sudo ls -la /opt/comfyui_cache/        # Local SSD cache
+sudo ls -la /mnt/persistent/           # Hyperdisk cache
+
+# View background sync logs
+make ssh
+sudo tail -f /var/log/comfy-sync.log
+
+# Monitor cache validation during startup
+make logs
+```
+
+### 🔄 Cache Sync Settings
+The system syncs every **5 minutes** by default:
+- **RAM Disk** → **Local SSD Cache** (for faster next startup)
+- **RAM Disk** → **Hyperdisk Cache** (for zone resilience)
+- **Shutdown sync** preserves final state
+
+### 🧹 Cache Management
+```bash
+# Clear local cache (forces Hyperdisk or fresh install recovery)
+make ssh
+sudo rm -rf /opt/comfyui_cache/
+
+# Clear persistent cache (forces fresh install - use carefully!)
+make ssh  
+sudo rm -rf /mnt/persistent/comfyui_cache/
+
+# Force fresh installation (disables all caching temporarily)
+# Edit terraform.tfvars: enable_persistent_cache = false
+make apply
+```
+
+**Pro Tip:** The caching system is automatic and self-managing. Manual intervention is rarely needed!
 
 ## 🎨 Model Management
 

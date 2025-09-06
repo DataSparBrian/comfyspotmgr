@@ -91,7 +91,28 @@ resource "google_storage_bucket_iam_member" "comfy_sa_gcs_permissions" {
 }
 
 # --------------------------------------------------------------------
-# 4. The Spot VM Instance (Updated for GCS FUSE)
+# 4. Hyperdisk Balanced for Persistent Caching (Conditional)
+# --------------------------------------------------------------------
+resource "google_compute_disk" "comfy_persistent_cache" {
+  count = var.enable_persistent_cache ? 1 : 0
+  
+  name = "${var.instance_name}-persistent-cache"
+  type = var.persistent_disk_type
+  zone = var.zone
+  size = var.persistent_disk_size
+
+  labels = merge(local.common_labels, {
+    purpose = "comfyui-cache"
+    cache_type = "persistent"
+  })
+
+  # Hyperdisk performance optimization
+  provisioned_iops       = var.persistent_disk_type == "hyperdisk-balanced" ? 3000 : null
+  provisioned_throughput = var.persistent_disk_type == "hyperdisk-balanced" ? 140 : null
+}
+
+# --------------------------------------------------------------------
+# 5. The Spot VM Instance (Updated for Hyperdisk Caching)
 # --------------------------------------------------------------------
 resource "google_compute_instance" "comfy_spot_vm" {
   name         = var.instance_name
@@ -149,17 +170,25 @@ resource "google_compute_instance" "comfy_spot_vm" {
     }
   }
 
-  # UPDATED - Startup script with Google Chat notifications
+  # Conditionally attach the persistent cache disk
+  dynamic "attached_disk" {
+    for_each = var.enable_persistent_cache ? [1] : []
+    content {
+      source      = google_compute_disk.comfy_persistent_cache[0].id
+      device_name = "persistent-cache"
+      mode        = "READ_WRITE"
+    }
+  }
+
+  # UPDATED - Multi-tier caching startup script with 5-minute sync intervals
   metadata_startup_script = <<-EOF
     #!/bin/bash
     set -e
     
     # Function to get or create the ComfyUI user
     get_comfy_user() {
-        # Try to find a non-root user (typically the one who created the instance)
         local user=$(getent passwd | grep -E ':/home/[^:]+:' | grep -v nobody | head -1 | cut -d: -f1)
         if [ -z "$user" ]; then
-            # If no user found, create a dedicated comfyui user
             user="comfyui"
             if ! id "$user" &>/dev/null; then
                 useradd -m -s /bin/bash "$user"
@@ -170,17 +199,24 @@ resource "google_compute_instance" "comfy_spot_vm" {
         echo "$user"
     }
     
-    # Variables
+    # Variables - Enhanced for multi-tier caching
     COMFY_USER=$(get_comfy_user)
     USER_HOME=$(eval echo ~$COMFY_USER)
     echo "Using ComfyUI user: $COMFY_USER"
     echo "User home directory: $USER_HOME"
+    
+    # Storage paths
     GCS_BUCKET_NAME="${google_storage_bucket.model_storage_bucket.name}"
     GCS_MOUNT_DIR="$USER_HOME/gcs_models"
     RAM_DISK_SIZE="${var.ram_disk_size}"
     RAM_DISK_PATH="/mnt/ramdisk"
     COMFY_PATH="$RAM_DISK_PATH/ComfyUI"
     MODELS_PATH="$RAM_DISK_PATH/models"
+    LOCAL_SSD_CACHE="/opt/comfyui_cache"
+    PERSISTENT_DISK_PATH="/mnt/persistent"
+    PERSISTENT_CACHE="$PERSISTENT_DISK_PATH/comfyui_cache"
+    
+    # Configuration
     WEBHOOK_URL="${var.google_chat_webhook_url}"
     INSTANCE_NAME="${var.instance_name}"
     INSTANCE_ZONE="${var.zone}"
@@ -188,6 +224,8 @@ resource "google_compute_instance" "comfy_spot_vm" {
     MAX_RUNTIME_HOURS="${var.max_runtime_hours}"
     SHUTDOWN_WARNING_MINUTES="${var.shutdown_warning_minutes}"
     ENABLE_MAX_RUNTIME="${var.enable_max_runtime}"
+    CACHE_SYNC_INTERVAL="${var.cache_sync_interval}"
+    ENABLE_PERSISTENT_CACHE="${var.enable_persistent_cache}"
 
     # Function to send Google Chat notification
     send_chat_notification() {
@@ -198,13 +236,257 @@ resource "google_compute_instance" "comfy_spot_vm" {
         sleep 1
     }
 
+    # Function to validate cache integrity
+    validate_cache() {
+        local cache_path="$1"
+        local cache_name="$2"
+        
+        if [ ! -d "$cache_path/ComfyUI" ]; then
+            echo "❌ $cache_name: ComfyUI directory missing"
+            return 1
+        fi
+        
+        if [ ! -f "$cache_path/ComfyUI/main.py" ]; then
+            echo "❌ $cache_name: main.py missing"
+            return 1
+        fi
+        
+        if [ ! -d "$cache_path/ComfyUI/custom_nodes/ComfyUI-Manager" ]; then
+            echo "❌ $cache_name: ComfyUI-Manager missing"
+            return 1
+        fi
+        
+        if [ ! -f "$cache_path/.cache_timestamp" ]; then
+            echo "⚠️  $cache_name: No timestamp found"
+            return 1
+        fi
+        
+        echo "✅ $cache_name: Cache validation passed"
+        return 0
+    }
+
+    # Function to copy from cache to RAM disk
+    copy_from_cache() {
+        local cache_path="$1"
+        local cache_name="$2"
+        
+        echo "📋 Copying from $cache_name to RAM disk..."
+        send_chat_notification "⚡ Found $cache_name! Fast recovery in progress on $INSTANCE_NAME..."
+        
+        # Copy ComfyUI installation
+        cp -R "$cache_path/ComfyUI" "$RAM_DISK_PATH/"
+        
+        # Copy models if they exist
+        if [ -d "$cache_path/models" ]; then
+            cp -R "$cache_path/models" "$RAM_DISK_PATH/"
+        fi
+        
+        chown -R $COMFY_USER:$COMFY_USER "$RAM_DISK_PATH"
+        
+        echo "✅ $cache_name recovery completed!"
+        send_chat_notification "🚀 $cache_name recovery completed in ~30 seconds on $INSTANCE_NAME!"
+        return 0
+    }
+
+    # Function to create cache timestamp
+    create_cache_timestamp() {
+        local cache_path="$1"
+        echo "$(date -u +%Y%m%d_%H%M%S)" > "$cache_path/.cache_timestamp"
+        echo "Cache created: $(date)" >> "$cache_path/.cache_info"
+        echo "Instance: $INSTANCE_NAME" >> "$cache_path/.cache_info"
+    }
+
+    # Function to setup persistent disk
+    setup_persistent_disk() {
+        if [ "$ENABLE_PERSISTENT_CACHE" = "true" ]; then
+            echo "🔧 Setting up persistent disk..."
+            
+            # Find the persistent disk device
+            PERSISTENT_DEVICE=$(lsblk -no NAME,SERIAL | grep persistent-cache | awk '{print "/dev/" $1}' | head -1)
+            
+            if [ -n "$PERSISTENT_DEVICE" ]; then
+                echo "Found persistent disk: $PERSISTENT_DEVICE"
+                
+                # Create mount point
+                mkdir -p "$PERSISTENT_DISK_PATH"
+                
+                # Check if filesystem exists, if not create it
+                if ! blkid "$PERSISTENT_DEVICE" > /dev/null 2>&1; then
+                    echo "Creating filesystem on persistent disk..."
+                    mkfs.ext4 -F "$PERSISTENT_DEVICE"
+                fi
+                
+                # Mount the persistent disk
+                mount "$PERSISTENT_DEVICE" "$PERSISTENT_DISK_PATH"
+                echo "$PERSISTENT_DEVICE $PERSISTENT_DISK_PATH ext4 defaults 0 2" >> /etc/fstab
+                
+                # Set ownership
+                chown $COMFY_USER:$COMFY_USER "$PERSISTENT_DISK_PATH"
+                
+                echo "✅ Persistent disk mounted at $PERSISTENT_DISK_PATH"
+            else
+                echo "⚠️  Persistent disk not found, disabling persistent cache"
+                ENABLE_PERSISTENT_CACHE="false"
+            fi
+        fi
+    }
+
+    # Function for fresh ComfyUI installation
+    fresh_install() {
+        echo "🔄 Performing fresh ComfyUI installation..."
+        send_chat_notification "🔄 No cache found - performing fresh install on $INSTANCE_NAME (this may take 5-10 minutes)..."
+        
+        # Mount GCS bucket temporarily to copy models
+        mkdir -p $GCS_MOUNT_DIR
+        gcsfuse $GCS_BUCKET_NAME $GCS_MOUNT_DIR
+        
+        # Create models directory in RAM disk and copy models from GCS
+        mkdir -p $MODELS_PATH/{checkpoints,loras,vae,controlnet,clip,unet,diffusion_models}
+        echo "Copying models from GCS to RAM disk..."
+        if [ "$(ls -A $GCS_MOUNT_DIR 2>/dev/null)" ]; then
+            rsync -ah --progress "$GCS_MOUNT_DIR/" "$MODELS_PATH/"
+            echo "✅ Models copied to RAM disk!"
+        else
+            echo "No models found in GCS bucket"
+        fi
+        
+        # Install ComfyUI
+        cd $RAM_DISK_PATH
+        git clone https://github.com/comfyanonymous/ComfyUI.git
+        cd ComfyUI
+        
+        # Install Python dependencies
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+        # Install ComfyUI Manager
+        cd custom_nodes
+        git clone https://github.com/ltdrdata/ComfyUI-Manager.git
+        cd ..
+        pip install -r custom_nodes/ComfyUI-Manager/requirements.txt
+        
+        # Configure ComfyUI to use RAM disk models
+        cat > extra_model_paths.yaml << 'CONFIG_EOF'
+ramdisk_models:
+  base_path: $MODELS_PATH
+  checkpoints: checkpoints
+  loras: loras
+  vae: vae
+  controlnet: controlnet
+  clip: clip
+  unet: unet
+  diffusion_models: diffusion_models
+CONFIG_EOF
+        
+        # Set ownership
+        chown -R $COMFY_USER:$COMFY_USER $RAM_DISK_PATH
+        
+        # Unmount GCS
+        fusermount -u $GCS_MOUNT_DIR || true
+        rmdir $GCS_MOUNT_DIR
+        
+        echo "✅ Fresh installation completed!"
+        send_chat_notification "✅ Fresh ComfyUI installation completed on $INSTANCE_NAME"
+    }
+
+    # Function to create shutdown service
+    create_shutdown_service() {
+        cat > /etc/systemd/system/comfy-cache-sync.service << 'SERVICE_EOF'
+[Unit]
+Description=ComfyUI Cache Sync on Shutdown
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/bin/true
+ExecStop=/opt/comfyui-shutdown-sync.sh
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+        # Create shutdown sync script
+        cat > /opt/comfyui-shutdown-sync.sh << 'SHUTDOWN_EOF'
+#!/bin/bash
+echo "🛑 Shutdown detected - syncing caches..."
+
+RAM_DISK_PATH="/mnt/ramdisk"
+LOCAL_SSD_CACHE="/opt/comfyui_cache"
+PERSISTENT_CACHE="/mnt/persistent/comfyui_cache"
+WEBHOOK_URL="${var.google_chat_webhook_url}"
+INSTANCE_NAME="${var.instance_name}"
+
+send_notification() {
+    curl -s -X POST -H 'Content-Type: application/json' "$WEBHOOK_URL" \
+        -d "{\"text\": \"$1\"}" > /dev/null 2>&1 || true
+}
+
+if [ -d "$RAM_DISK_PATH/ComfyUI" ]; then
+    send_notification "💾 Syncing caches before shutdown on $INSTANCE_NAME..."
+    
+    # Sync to Local SSD cache
+    mkdir -p "$LOCAL_SSD_CACHE"
+    rsync -a --delete "$RAM_DISK_PATH/" "$LOCAL_SSD_CACHE/" 2>/dev/null || true
+    echo "$(date -u +%Y%m%d_%H%M%S)" > "$LOCAL_SSD_CACHE/.cache_timestamp"
+    
+    # Sync to persistent cache if available
+    if [ -d "/mnt/persistent" ] && mountpoint -q "/mnt/persistent"; then
+        mkdir -p "$PERSISTENT_CACHE"
+        rsync -a --delete "$RAM_DISK_PATH/" "$PERSISTENT_CACHE/" 2>/dev/null || true
+        echo "$(date -u +%Y%m%d_%H%M%S)" > "$PERSISTENT_CACHE/.cache_timestamp"
+    fi
+    
+    send_notification "✅ Cache sync completed on $INSTANCE_NAME - shutdown proceeding"
+fi
+SHUTDOWN_EOF
+
+        chmod +x /opt/comfyui-shutdown-sync.sh
+        systemctl enable comfy-cache-sync.service
+        systemctl start comfy-cache-sync.service
+    }
+
+    # Function to start background sync processes
+    start_background_sync() {
+        cat > /opt/comfyui-background-sync.sh << 'SYNC_EOF'
+#!/bin/bash
+RAM_DISK_PATH="/mnt/ramdisk"
+LOCAL_SSD_CACHE="/opt/comfyui_cache"
+PERSISTENT_CACHE="/mnt/persistent/comfyui_cache"
+SYNC_INTERVAL="$1"
+
+while true; do
+    if [ -d "$RAM_DISK_PATH/ComfyUI" ]; then
+        # Sync to Local SSD
+        mkdir -p "$LOCAL_SSD_CACHE"
+        rsync -a --delete "$RAM_DISK_PATH/" "$LOCAL_SSD_CACHE/" 2>/dev/null || true
+        echo "$(date -u +%Y%m%d_%H%M%S)" > "$LOCAL_SSD_CACHE/.cache_timestamp"
+        
+        # Sync to persistent cache if available
+        if [ -d "/mnt/persistent" ] && mountpoint -q "/mnt/persistent"; then
+            mkdir -p "$PERSISTENT_CACHE"
+            rsync -a --delete "$RAM_DISK_PATH/" "$PERSISTENT_CACHE/" 2>/dev/null || true
+            echo "$(date -u +%Y%m%d_%H%M%S)" > "$PERSISTENT_CACHE/.cache_timestamp"
+        fi
+    fi
+    
+    sleep "$SYNC_INTERVAL"
+done
+SYNC_EOF
+
+        chmod +x /opt/comfyui-background-sync.sh
+        nohup /opt/comfyui-background-sync.sh "$CACHE_SYNC_INTERVAL" > /var/log/comfy-sync.log 2>&1 &
+        echo "✅ Background sync started with $CACHE_SYNC_INTERVAL second intervals"
+    }
+
     # Function to schedule shutdown warning notification
     schedule_shutdown_warning() {
         if [ "$ENABLE_MAX_RUNTIME" = "true" ]; then
             local warning_seconds=$((MAX_RUNTIME_HOURS * 3600 - SHUTDOWN_WARNING_MINUTES * 60))
-            echo "Scheduling shutdown warning notification in $warning_seconds seconds ($SHUTDOWN_WARNING_MINUTES minutes before shutdown)"
+            echo "Scheduling shutdown warning notification in $warning_seconds seconds"
             
-            # Create shutdown warning script
             cat > /tmp/shutdown_warning.sh << 'WARNING_SCRIPT_EOF'
 #!/bin/bash
 WEBHOOK_URL="$1"
@@ -212,39 +494,27 @@ INSTANCE_NAME="$2"
 SHUTDOWN_WARNING_MINUTES="$3"
 MAX_RUNTIME_HOURS="$4"
 
-send_chat_notification() {
-    local message="$1"
-    curl -s -X POST -H 'Content-Type: application/json' "$WEBHOOK_URL" \
-        -d "{\"text\": \"$message\"}" > /dev/null || true
-}
-
-send_chat_notification "⚠️ SHUTDOWN WARNING: $INSTANCE_NAME will automatically stop in $SHUTDOWN_WARNING_MINUTES minutes!
-
-🕐 Maximum runtime: $MAX_RUNTIME_HOURS hour(s)
-🛑 Save your work and export any results now
-💾 The instance will be STOPPED (not deleted) to save costs
-🔄 You can restart it anytime from the GCP Console"
+curl -s -X POST -H 'Content-Type: application/json' "$WEBHOOK_URL" \
+    -d "{\"text\": \"⚠️ SHUTDOWN WARNING: $INSTANCE_NAME will automatically stop in $SHUTDOWN_WARNING_MINUTES minutes!\n\n🕐 Maximum runtime: $MAX_RUNTIME_HOURS hour(s)\n🛑 Save your work and export any results now\n💾 The instance will be STOPPED (not deleted) to save costs\n🔄 You can restart it anytime from the GCP Console\"}" > /dev/null || true
 WARNING_SCRIPT_EOF
 
             chmod +x /tmp/shutdown_warning.sh
-            
-            # Schedule the warning using 'at' command
             apt-get install -y at
             systemctl start atd
             systemctl enable atd
-            
             echo "/tmp/shutdown_warning.sh '$WEBHOOK_URL' '$INSTANCE_NAME' '$SHUTDOWN_WARNING_MINUTES' '$MAX_RUNTIME_HOURS'" | at now + $warning_seconds seconds 2>/dev/null || echo "Warning: Could not schedule shutdown notification"
         fi
     }
 
-    # Get public IP (will be available after instance starts)
+    # Get public IP
     get_public_ip() {
         curl -s -H "Metadata-Flavor: Google" \
             http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip || echo "localhost"
     }
 
-    # Send startup notification
-    send_chat_notification "🚀 ComfyUI deployment starting on $INSTANCE_NAME in $INSTANCE_ZONE..."
+    # MAIN EXECUTION STARTS HERE
+    echo "🚀 Starting ComfyUI with multi-tier caching..."
+    send_chat_notification "🚀 ComfyUI deployment starting with multi-tier caching on $INSTANCE_NAME..."
 
     # Install dependencies
     export GCSFUSE_REPO=gcsfuse-$(lsb_release -c -s)
@@ -259,74 +529,57 @@ WARNING_SCRIPT_EOF
     sudo mount -t tmpfs -o size=$RAM_DISK_SIZE tmpfs $RAM_DISK_PATH
     sudo chown $COMFY_USER:$COMFY_USER $RAM_DISK_PATH
 
-    # Mount GCS bucket temporarily to copy models
-    mkdir -p $GCS_MOUNT_DIR
-    gcsfuse $GCS_BUCKET_NAME $GCS_MOUNT_DIR
+    # Setup persistent disk if enabled
+    setup_persistent_disk
 
-    # Create models directory in RAM disk and copy models from GCS
-    mkdir -p $MODELS_PATH/{checkpoints,loras,vae,controlnet,clip,unet,diffusion_models}
-    echo "Copying models from GCS to RAM disk..."
-    if [ "$(ls -A $GCS_MOUNT_DIR 2>/dev/null)" ]; then
-      rsync -ah --progress "$GCS_MOUNT_DIR/" "$MODELS_PATH/"
-      echo "✅ Models copied to RAM disk!"
-      send_chat_notification "📦 Models copied to $RAM_DISK_SIZE RAM disk on $INSTANCE_NAME"
+    # Multi-tier cache detection logic
+    CACHE_HIT=false
+    
+    echo "🔍 Checking cache hierarchy..."
+    
+    # 1. Check Local SSD cache first (fastest recovery)
+    if [ -d "$LOCAL_SSD_CACHE" ] && validate_cache "$LOCAL_SSD_CACHE" "Local SSD Cache"; then
+        echo "🎯 Local SSD Cache HIT!"
+        copy_from_cache "$LOCAL_SSD_CACHE" "Local SSD Cache"
+        CACHE_HIT=true
+    # 2. Check Persistent Disk cache second (zone-persistent recovery)  
+    elif [ "$ENABLE_PERSISTENT_CACHE" = "true" ] && [ -d "$PERSISTENT_CACHE" ] && validate_cache "$PERSISTENT_CACHE" "Persistent Cache"; then
+        echo "🎯 Persistent Cache HIT!"
+        copy_from_cache "$PERSISTENT_CACHE" "Persistent Cache"
+        # Also copy to Local SSD for next time
+        echo "📋 Caching to Local SSD for faster future recovery..."
+        mkdir -p "$LOCAL_SSD_CACHE"
+        cp -R "$PERSISTENT_CACHE"/* "$LOCAL_SSD_CACHE/"
+        create_cache_timestamp "$LOCAL_SSD_CACHE"
+        CACHE_HIT=true
+    # 3. No cache found - fresh installation required
     else
-      echo "No models found in GCS bucket, continuing with empty models directory"
-      send_chat_notification "📦 No models found in GCS bucket - continuing with empty models directory"
+        echo "❌ No valid cache found - proceeding with fresh installation"
+        fresh_install
     fi
 
-    # Clean install of ComfyUI directly to RAM disk
-    echo "Installing ComfyUI to RAM disk..."
-    cd $RAM_DISK_PATH
-    git clone https://github.com/comfyanonymous/ComfyUI.git
-    cd ComfyUI
-    
-    # Install Python dependencies
-    pip install --upgrade pip
-    pip install -r requirements.txt
+    # Create shutdown service and start background sync
+    create_shutdown_service
+    start_background_sync
 
-    # Install ComfyUI Manager
-    cd custom_nodes
-    git clone https://github.com/ltdrdata/ComfyUI-Manager.git
-    cd ..
-    pip install -r custom_nodes/ComfyUI-Manager/requirements.txt
-
-    # Configure ComfyUI to use RAM disk models
-    cat > extra_model_paths.yaml << CONFIG_EOF
-ramdisk_models:
-  base_path: $MODELS_PATH
-  checkpoints: checkpoints
-  loras: loras
-  vae: vae
-  controlnet: controlnet
-  clip: clip
-  unet: unet
-  diffusion_models: diffusion_models
-CONFIG_EOF
-
-    # Unmount GCS (we've copied everything we need)
-    fusermount -u $GCS_MOUNT_DIR || true
-    rmdir $GCS_MOUNT_DIR
-
-    echo "✅ ComfyUI installation complete on RAM disk!"
-    send_chat_notification "✅ ComfyUI installation complete on $INSTANCE_NAME - starting server..."
-
-    # Schedule shutdown warning notification if max runtime is enabled
+    # Schedule shutdown warning if enabled
     schedule_shutdown_warning
 
-    # Get the public IP before starting the server
+    # Get public IP
     PUBLIC_IP=$(get_public_ip)
     
-    # Create a background process to send ready notification once ComfyUI is responsive
+    echo "✅ ComfyUI setup complete - starting server..."
+    
+    # Background notification once server is ready
     (
-        sleep 30  # Give ComfyUI time to start
+        sleep 30
         for i in {1..20}; do
             if curl -s --connect-timeout 3 "http://localhost:$COMFY_PORT/" > /dev/null 2>&1; then
-                send_chat_notification "🎉 ComfyUI Server Ready!
-📍 Instance: $INSTANCE_NAME ($INSTANCE_ZONE)
-🌐 Access: http://$PUBLIC_IP:$COMFY_PORT
-⚡ Running on $RAM_DISK_SIZE RAM disk
-🎯 Click the link above to launch ComfyUI on your iPad!"
+                if [ "$CACHE_HIT" = "true" ]; then
+                    send_chat_notification "🎉 ComfyUI Ready via CACHE! ⚡\n📍 Instance: $INSTANCE_NAME ($INSTANCE_ZONE)\n🌐 Access: http://$PUBLIC_IP:$COMFY_PORT\n⚡ Running on $RAM_DISK_SIZE RAM disk with multi-tier caching\n🚀 Recovery took ~30 seconds!"
+                else
+                    send_chat_notification "🎉 ComfyUI Ready! \n📍 Instance: $INSTANCE_NAME ($INSTANCE_ZONE)\n🌐 Access: http://$PUBLIC_IP:$COMFY_PORT\n⚡ Running on $RAM_DISK_SIZE RAM disk with multi-tier caching\n📦 Fresh installation completed"
+                fi
                 break
             fi
             sleep 10
@@ -334,7 +587,6 @@ CONFIG_EOF
     ) &
 
     echo "Starting ComfyUI server on port $COMFY_PORT..."
-    # Start ComfyUI as the user (not as root)
     sudo -u $COMFY_USER -H bash -c "cd $COMFY_PATH && python3 main.py --listen --port $COMFY_PORT"
   EOF
 
@@ -347,7 +599,7 @@ CONFIG_EOF
 # --- (Firewall, IAM, and Alerting sections remain the same) ---
 
 # --------------------------------------------------------------------
-# 5. Firewall & IAM for IAP
+# 6. Firewall & IAM for IAP
 # --------------------------------------------------------------------
 resource "google_compute_firewall" "allow_ssh_via_iap" {
   name          = var.firewall_name
@@ -390,7 +642,7 @@ resource "google_project_iam_member" "iap_tunnel_user" {
 
 
 # --------------------------------------------------------------------
-# 6. ComfyUI Service Monitoring & Google Chat Notifications
+# 7. ComfyUI Service Monitoring & Google Chat Notifications
 # --------------------------------------------------------------------
 
 # Google Chat webhook notification channel

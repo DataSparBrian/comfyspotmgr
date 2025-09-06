@@ -201,5 +201,30 @@ variable "enable_max_runtime" {
   default     = true
 }
 
+# Hyperdisk variables for caching
+variable "persistent_disk_size" {
+  description = "Size of the Hyperdisk Balanced for ComfyUI cache in GB"
+  type        = number
+  default     = 300
+}
+
+variable "persistent_disk_type" {
+  description = "Type of Hyperdisk (hyperdisk-balanced, hyperdisk-extreme, hyperdisk-ml, hyperdisk-throughput)"
+  type        = string
+  default     = "hyperdisk-balanced"
+}
+
+variable "enable_persistent_cache" {
+  description = "Enable Hyperdisk caching for ComfyUI installations"
+  type        = bool
+  default     = true
+}
+
+variable "cache_sync_interval" {
+  description = "Interval in seconds for background cache sync"
+  type        = number
+  default     = 300
+}
+
 # Image selection is now simplified to use the current supported Deep Learning VM family
 # No additional variables needed - using pytorch-2-7-cu128-ubuntu-2204-nvidia-570 directly

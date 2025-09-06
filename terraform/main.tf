@@ -146,8 +146,27 @@ resource "google_compute_instance" "comfy_spot_vm" {
     #!/bin/bash
     set -e
     
+    # Function to get or create the ComfyUI user
+    get_comfy_user() {
+        # Try to find a non-root user (typically the one who created the instance)
+        local user=$(getent passwd | grep -E ':/home/[^:]+:' | grep -v nobody | head -1 | cut -d: -f1)
+        if [ -z "$user" ]; then
+            # If no user found, create a dedicated comfyui user
+            user="comfyui"
+            if ! id "$user" &>/dev/null; then
+                useradd -m -s /bin/bash "$user"
+                usermod -aG sudo "$user"
+                echo "Created user: $user"
+            fi
+        fi
+        echo "$user"
+    }
+    
     # Variables
-    USER_HOME=$(eval echo ~$(logname))
+    COMFY_USER=$(get_comfy_user)
+    USER_HOME=$(eval echo ~$COMFY_USER)
+    echo "Using ComfyUI user: $COMFY_USER"
+    echo "User home directory: $USER_HOME"
     GCS_BUCKET_NAME="${google_storage_bucket.model_storage_bucket.name}"
     GCS_MOUNT_DIR="$USER_HOME/gcs_models"
     RAM_DISK_SIZE="${var.ram_disk_size}"
@@ -188,7 +207,7 @@ resource "google_compute_instance" "comfy_spot_vm" {
     # Set up RAM disk
     sudo mkdir -p $RAM_DISK_PATH
     sudo mount -t tmpfs -o size=$RAM_DISK_SIZE tmpfs $RAM_DISK_PATH
-    sudo chown $(logname):$(logname) $RAM_DISK_PATH
+    sudo chown $COMFY_USER:$COMFY_USER $RAM_DISK_PATH
 
     # Mount GCS bucket temporarily to copy models
     mkdir -p $GCS_MOUNT_DIR
@@ -263,7 +282,7 @@ CONFIG_EOF
 
     echo "Starting ComfyUI server on port $COMFY_PORT..."
     # Start ComfyUI as the user (not as root)
-    sudo -u $(logname) -H bash -c "cd $COMFY_PATH && python3 main.py --listen --port $COMFY_PORT"
+    sudo -u $COMFY_USER -H bash -c "cd $COMFY_PATH && python3 main.py --listen --port $COMFY_PORT"
   EOF
 
   tags = local.instance_tags

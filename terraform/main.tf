@@ -130,8 +130,16 @@ resource "google_compute_instance" "comfy_spot_vm" {
     preemptible                 = true
     provisioning_model          = "SPOT"
     automatic_restart          = false
-    instance_termination_action = "DELETE"
+    instance_termination_action = "STOP"
     on_host_maintenance         = "TERMINATE"
+    
+    # Conditional max run duration block
+    dynamic "max_run_duration" {
+      for_each = var.enable_max_runtime ? [1] : []
+      content {
+        seconds = var.max_runtime_hours * 3600
+      }
+    }
   }
 
   network_interface {
@@ -177,6 +185,9 @@ resource "google_compute_instance" "comfy_spot_vm" {
     INSTANCE_NAME="${var.instance_name}"
     INSTANCE_ZONE="${var.zone}"
     COMFY_PORT="${var.comfyui_port}"
+    MAX_RUNTIME_HOURS="${var.max_runtime_hours}"
+    SHUTDOWN_WARNING_MINUTES="${var.shutdown_warning_minutes}"
+    ENABLE_MAX_RUNTIME="${var.enable_max_runtime}"
 
     # Function to send Google Chat notification
     send_chat_notification() {
@@ -185,6 +196,45 @@ resource "google_compute_instance" "comfy_spot_vm" {
         curl -s -X POST -H 'Content-Type: application/json' "$WEBHOOK_URL" \
             -d "{\"text\": \"$message\"}" > /dev/null || true
         sleep 1
+    }
+
+    # Function to schedule shutdown warning notification
+    schedule_shutdown_warning() {
+        if [ "$ENABLE_MAX_RUNTIME" = "true" ]; then
+            local warning_seconds=$((MAX_RUNTIME_HOURS * 3600 - SHUTDOWN_WARNING_MINUTES * 60))
+            echo "Scheduling shutdown warning notification in $warning_seconds seconds ($SHUTDOWN_WARNING_MINUTES minutes before shutdown)"
+            
+            # Create shutdown warning script
+            cat > /tmp/shutdown_warning.sh << 'WARNING_SCRIPT_EOF'
+#!/bin/bash
+WEBHOOK_URL="$1"
+INSTANCE_NAME="$2"
+SHUTDOWN_WARNING_MINUTES="$3"
+MAX_RUNTIME_HOURS="$4"
+
+send_chat_notification() {
+    local message="$1"
+    curl -s -X POST -H 'Content-Type: application/json' "$WEBHOOK_URL" \
+        -d "{\"text\": \"$message\"}" > /dev/null || true
+}
+
+send_chat_notification "⚠️ SHUTDOWN WARNING: $INSTANCE_NAME will automatically stop in $SHUTDOWN_WARNING_MINUTES minutes!
+
+🕐 Maximum runtime: $MAX_RUNTIME_HOURS hour(s)
+🛑 Save your work and export any results now
+💾 The instance will be STOPPED (not deleted) to save costs
+🔄 You can restart it anytime from the GCP Console"
+WARNING_SCRIPT_EOF
+
+            chmod +x /tmp/shutdown_warning.sh
+            
+            # Schedule the warning using 'at' command
+            apt-get install -y at
+            systemctl start atd
+            systemctl enable atd
+            
+            echo "/tmp/shutdown_warning.sh '$WEBHOOK_URL' '$INSTANCE_NAME' '$SHUTDOWN_WARNING_MINUTES' '$MAX_RUNTIME_HOURS'" | at now + $warning_seconds seconds 2>/dev/null || echo "Warning: Could not schedule shutdown notification"
+        fi
     }
 
     # Get public IP (will be available after instance starts)
@@ -260,6 +310,9 @@ CONFIG_EOF
 
     echo "✅ ComfyUI installation complete on RAM disk!"
     send_chat_notification "✅ ComfyUI installation complete on $INSTANCE_NAME - starting server..."
+
+    # Schedule shutdown warning notification if max runtime is enabled
+    schedule_shutdown_warning
 
     # Get the public IP before starting the server
     PUBLIC_IP=$(get_public_ip)

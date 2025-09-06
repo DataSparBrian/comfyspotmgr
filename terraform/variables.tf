@@ -183,5 +183,23 @@ variable "google_chat_webhook_url" {
   # No default - must be specified in terraform.tfvars
 }
 
+variable "max_runtime_hours" {
+  description = "Maximum runtime for spot instance in hours"
+  type        = number
+  default     = 1
+}
+
+variable "shutdown_warning_minutes" {
+  description = "Minutes before shutdown to send warning notification"
+  type        = number
+  default     = 5
+}
+
+variable "enable_max_runtime" {
+  description = "Enable automatic shutdown after max runtime"
+  type        = bool
+  default     = true
+}
+
 # Image selection is now simplified to use the current supported Deep Learning VM family
 # No additional variables needed - using pytorch-2-7-cu128-ubuntu-2204-nvidia-570 directly

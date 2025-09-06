@@ -119,6 +119,12 @@ resource "google_compute_instance" "comfy_spot_vm" {
   machine_type = var.machine_type
   zone         = var.zone
 
+  # FIX: Add params block to address the API error
+  # This tells GCP to discard the local SSD upon termination, which is required for Spot VMs.
+  params {
+    discard_local_ssds_at_termination_timestamp = true
+  }
+
   # The boot disk is now smaller and can be safely deleted with the instance
   boot_disk {
     auto_delete = true

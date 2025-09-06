@@ -119,12 +119,6 @@ resource "google_compute_instance" "comfy_spot_vm" {
   machine_type = var.machine_type
   zone         = var.zone
 
-  # FIX: Add params block to address the API error
-  # This tells GCP to discard the local SSD upon termination, which is required for Spot VMs.
-  params {
-    discard_local_ssds_at_termination_timestamp = true
-  }
-
   # The boot disk is now smaller and can be safely deleted with the instance
   boot_disk {
     auto_delete = true
@@ -156,14 +150,10 @@ resource "google_compute_instance" "comfy_spot_vm" {
   scheduling {
     preemptible                 = true
     provisioning_model          = "SPOT"
-    automatic_restart          = false
+    automatic_restart           = false
     instance_termination_action = "STOP"
     on_host_maintenance         = "TERMINATE"
-    
-    # Local SSD recovery timeout - discard data immediately on termination
-    local_ssd_recovery_timeout {
-      seconds = 0
-    }
+    discard_local_ssd           = true # Correctly handles local SSD discard for Spot VMs.
     
     # Conditional max run duration block
     dynamic "max_run_duration" {
@@ -726,3 +716,4 @@ resource "google_monitoring_alert_policy" "comfyui_ready_alert" {
     auto_close = "1800s" # Auto-close after 30 minutes
   }
 }
+
